@@ -59,7 +59,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
     <h1>扫描件拆分工具</h1>
     <div class="hint">文件仅在本机浏览器内处理，不上传服务器 · 合并扫描的合同/发票等自动拆分为多份 PDF</div>
   </div>
-  <div class="pfx">命名前缀 <input id="prefix" value="销售合同"></div>
+  <div class="pfx">命名前缀 <input id="prefix" value="" placeholder="留空=按单据类型"></div>
 </header>
 
 <div id="drop">点击选择或将 PDF 文件拖到此处（可多选）<div class="sub">首次识别需加载本地文字识别引擎（约 15MB，之后有缓存）</div></div>
@@ -120,7 +120,7 @@ async function processFile(item){
   }
   item.starts=new Set([0]);
   for(let i=1;i<item.pages.length;i++){
-    if(/销\s*售\s*合\s*同|銷\s*售\s*合\s*同|购\s*销\s*合\s*同|購\s*銷\s*合\s*同/.test(item.pages[i].text))item.starts.add(i);
+    if(detectType(item.pages[i].text))item.starts.add(i);
   }
   computeSegs(item);
   item.done=true;
@@ -146,28 +146,54 @@ async function renderStrip(page){
   return strip;
 }
 
+const DOC_TYPES=[
+ {key:'pi',name:'形式发票',prefix:'PI',re:/proformainvoice|形式发票|形式發票/i},
+ {key:'invoice',name:'INVOICE',prefix:'INVOICE',re:/invoice|发票|發票/i},
+ {key:'packing',name:'装箱单',prefix:'装箱单',re:/packinglist|装箱单|裝箱單/i},
+ {key:'bl',name:'提单',prefix:'提单',re:/billoflading|提单|提單/i},
+ {key:'customs',name:'报关单',prefix:'报关单',re:/报关单|報關單/i},
+ {key:'confirm',name:'售货确认书',prefix:'售货确认书',re:/salesconfirmation|售货确认书|售貨確認書/i},
+ {key:'contract',name:'销售合同',prefix:'销售合同',re:/销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|合同书|合同書|salescontract|purchasecontract|^(?:銷|销)?售?(?:购|購)?合同(?:書|书)?$/i}
+];
+function detectType(text){
+  if(!text)return null;
+  const t=text.replace(/\s+/g,'');
+  for(const d of DOC_TYPES){if(d.re.test(t))return d;}
+  return null;
+}
 function computeSegs(item){
   const starts=[...item.starts].sort((a,b)=>a-b);
   item.segs=starts.map((s,idx)=>{
     const end=(idx+1<starts.length)?starts[idx+1]:item.pages.length;
-    return {from:s,to:end,num:extractNum(item.pages[s].text),name:''};
+    const t=detectType(item.pages[s].text);
+    return {from:s,to:end,num:extractNum(item.pages[s].text,t?t.key:''),typeName:t?t.name:'单据',prefix:t?t.prefix:'单据',name:''};
   });
   refreshNames(item);
 }
-function extractNum(text){
+function extractNum(text,type){
   if(!text)return '';
   const t=text.replace(/\s+/g,'');
-  let m=t.match(/(?:合同编号|合同編號|編號|编号)[:：]?([A-Za-z0-9][A-Za-z0-9\-\/]{3,29})/);
-  if(!m)m=t.match(/\b([A-Z]{2,4}[-]?\d{3,}(?:[-\/]\d{1,4})?)/);
+  let m=null;
+  if(type==='pi'){
+    m=t.match(/proformainvoice(?:no)?[.:#]?([A-Za-z0-9][A-Za-z0-9\-\/]{2,29})/i);
+  }else if(type==='invoice'){
+    m=t.match(/invoiceno[.:#]?([A-Za-z0-9][A-Za-z0-9\-\/]{2,29})/i)||t.match(/(?:发票号码|發票號碼)[.:]?(\d{6,20})/);
+  }else if(type==='packing'){
+    m=t.match(/(?:packinglistno|plno)[.:#]?([A-Za-z0-9][A-Za-z0-9\-\/]{2,29})/i);
+  }else if(type==='contract'){
+    m=t.match(/(?:合同编号|合同編號|編號|编号)[:：]?([A-Za-z0-9][A-Za-z0-9\-\/]{3,29})/);
+  }
+  if(!m)m=t.match(/([A-Z]{2,4}[-]?\d{3,}(?:[-\/]\d{1,4})?)/);
   if(!m)return '';
   return m[1].replace(/[:：,，。.;；]+$/,'');
 }
 function sanitize(s){return s.replace(/[\\/:*?"<>|]/g,'-');}
 function refreshNames(item){
-  const pfx=$('#prefix').value.trim()||'合同';
+  const gpfx=$('#prefix').value.trim();
   item.segs.forEach((sg,idx)=>{
     const pg=`第${sg.from+1}-${sg.to}页`;
-    sg.name=sg.num?`${pfx}_${sanitize(sg.num)}.pdf`:`${pfx}_合同${idx+1}_${pg}.pdf`;
+    const pfx=gpfx||sg.prefix;
+    sg.name=sg.num?`${pfx}_${sanitize(sg.num)}.pdf`:`${pfx}_${pg}.pdf`;
   });
 }
 
@@ -195,8 +221,8 @@ function renderDetail(item){
   d.classList.remove('hide');
   const idx=files.indexOf(item);
   d.innerHTML=`<div class="thumbs"></div>
-    <div class="tipline"><span>共 ${item.pages.length} 页</span><span style="color:var(--blue)">点击缩略图可设为「合同开始页」/ 再点取消（第 1 页固定为开始）</span></div>
-    <table><thead><tr><th style="width:46%">输出文件名</th><th>页码</th><th>识别编号</th></tr></thead><tbody></tbody></table>
+    <div class="tipline"><span>共 ${item.pages.length} 页</span><span style="color:var(--blue)">点击缩略图可设为「单据开始页」/ 再点取消（第 1 页固定为开始）</span></div>
+    <table><thead><tr><th style="width:40%">输出文件名</th><th>页码</th><th>类型</th><th>识别编号</th></tr></thead><tbody></tbody></table>
     <div class="btns"><button onclick="exportOne(${idx})">单独导出该文件</button></div>`;
   const tw=d.querySelector('.thumbs');
   item.pages.forEach((p,i)=>{
@@ -206,7 +232,12 @@ function renderDetail(item){
     sc.getContext('2d').drawImage(p.cv,0,0);
     sc.style.transform='scale(1)';
     t.appendChild(sc);
-    if(item.starts.has(i)){const tag=document.createElement('span');tag.className='tag';tag.textContent=`合同 ${[...item.starts].sort((a,b)=>a-b).indexOf(i)+1} 开始`;t.appendChild(tag);}
+    if(item.starts.has(i)){
+      const tag=document.createElement('span');tag.className='tag';
+      const dt=detectType(p.text);
+      tag.textContent=`${dt?dt.name:'单据'} ${[...item.starts].sort((a,b)=>a-b).indexOf(i)+1} 开始`;
+      t.appendChild(tag);
+    }
     const pn=document.createElement('div');pn.className='pn';pn.textContent=`第 ${i+1} 页`;t.appendChild(pn);
     t.onclick=()=>{if(i===0)return;item.starts.has(i)?item.starts.delete(i):item.starts.add(i);computeSegs(item);renderDetail(item);};
     tw.appendChild(t);
@@ -219,7 +250,7 @@ function renderTable(item){
   tb.innerHTML='';
   item.segs.forEach((sg,i)=>{
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td><input value=""></td><td>${sg.from+1}–${sg.to}</td><td>${sg.num?`<span class="badge ok">✓ ${sg.num}</span>`:'<span class="badge gray">未识别</span>'}</td>`;
+    tr.innerHTML=`<td><input value=""></td><td>${sg.from+1}–${sg.to}</td><td><span class="badge">${sg.typeName}</span></td><td>${sg.num?`<span class="badge ok">✓ ${sg.num}</span>`:'<span class="badge gray">未识别</span>'}</td>`;
     const inp=tr.querySelector('input');
     inp.value=sg.name;
     inp.onchange=()=>{sg.name=inp.value;};
