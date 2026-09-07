@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>扫描件拆分工具</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<style>
+:root{--blue:#185FA5;--blue-bg:#E6F1FB;--ink:#2C2C2A;--mut:#888780;--line:#e3e1d8;--bg:#f6f6f3;--ok:#3B6D11;--ok-bg:#EAF3DE;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6;padding:24px 16px;}
+.wrap{max-width:860px;margin:0 auto;}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;}
+h1{font-size:18px;font-weight:500;}
+.hint{font-size:12px;color:var(--mut);}
+.pfx{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--mut);}
+.pfx input{width:110px;padding:5px 8px;border:0.5px solid var(--line);border-radius:6px;font-size:13px;}
+.card{background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+#drop{border:1.5px dashed #c6c4ba;border-radius:12px;padding:34px;text-align:center;color:var(--mut);cursor:pointer;transition:border-color .15s;background:#fff;}
+#drop.on{border-color:var(--blue);background:var(--blue-bg);}
+#drop b{color:var(--blue);font-weight:500;}
+#drop .sub{font-size:12px;margin-top:4px;}
+.fhead{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;}
+.fname{font-weight:500;font-size:14px;}
+.fmeta{font-size:12px;color:var(--mut);}
+.badge{font-size:11px;padding:2px 9px;border-radius:99px;background:var(--blue-bg);color:var(--blue);white-space:nowrap;}
+.badge.gray{background:#f0efe9;color:var(--mut);}
+.badge.ok{background:var(--ok-bg);color:var(--ok);}
+.thumbs{display:flex;gap:8px;overflow-x:auto;padding:14px 2px 6px;}
+.thumb{flex:0 0 auto;width:92px;cursor:pointer;position:relative;text-align:center;}
+.thumb canvas{width:92px;border:0.5px solid var(--line);border-radius:6px;background:#fff;display:block;}
+.thumb.start canvas{border:2px solid var(--blue);}
+.thumb .tag{position:absolute;top:-9px;left:50%;transform:translateX(-50%);font-size:10px;background:#fff;border:0.5px solid var(--blue);color:var(--blue);border-radius:99px;padding:0 7px;white-space:nowrap;}
+.thumb .pn{font-size:11px;color:var(--mut);margin-top:4px;}
+.tipline{font-size:12px;color:var(--mut);display:flex;justify-content:space-between;padding:2px 4px;}
+table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}
+th{font-size:12px;color:var(--mut);font-weight:400;text-align:left;background:#fafaf7;padding:7px 10px;border-bottom:0.5px solid var(--line);}
+td{padding:7px 10px;border-bottom:0.5px solid var(--line);}
+td input{width:100%;border:none;background:transparent;font-size:13px;padding:2px 4px;border-radius:4px;}
+td input:focus{outline:0.5px solid var(--blue);background:#fafcff;}
+.btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap;}
+button{font-size:13px;padding:7px 14px;border:0.5px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;color:var(--ink);}
+button:hover{border-color:var(--blue);color:var(--blue);}
+button.pri{background:var(--blue);border-color:var(--blue);color:#fff;}
+button.pri:hover{opacity:.9;color:#fff;}
+button:disabled{opacity:.45;cursor:not-allowed;}
+.status{font-size:12px;color:var(--blue);padding:6px 2px;}
+.hide{display:none;}
+.topbtns{display:flex;gap:8px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div>
+    <h1>扫描件拆分工具</h1>
+    <div class="hint">文件仅在本机浏览器内处理，不上传服务器 · 合并扫描的合同/发票等自动拆分为多份 PDF</div>
+  </div>
+  <div class="pfx">命名前缀 <input id="prefix" value="销售合同"></div>
+</header>
+
+<div id="drop">点击选择或将 PDF 文件拖到此处（可多选）<div class="sub">首次识别需加载本地文字识别引擎（约 15MB，之后有缓存）</div></div>
+<input type="file" id="file" accept="application/pdf" multiple class="hide">
+<div id="status" class="status"></div>
+<div id="list"></div>
+<div class="btns hide" id="allbtns"><button class="pri" id="zipall">全部确认并打包下载 (zip)</button></div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const $=s=>document.querySelector(s);
+let ocrWorker=null, files=[];
+
+const drop=$('#drop'), fileInput=$('#file');
+drop.onclick=()=>fileInput.click();
+fileInput.onchange=e=>addFiles(e.target.files);
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('on');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('on');}));
+drop.addEventListener('drop',e=>addFiles(e.dataTransfer.files));
+$('#prefix').addEventListener('input',()=>{files.forEach(refreshNames);files.forEach(renderTable);});
+
+async function getOcr(){
+  if(!ocrWorker){
+    setStatus('首次加载识别引擎…（约15MB，请稍候）');
+    ocrWorker=await Tesseract.createWorker(['chi_tra','eng'],1);
+  }
+  return ocrWorker;
+}
+
+async function addFiles(fl){
+  for(const f of fl){
+    if(f.type!=='application/pdf'&&!f.name.toLowerCase().endsWith('.pdf'))continue;
+    const item={name:f.name,bytes:await f.arrayBuffer(),pages:[],starts:new Set(),segs:[],libDoc:null,done:false};
+    files.push(item); renderFileCard(item);
+    try{ await processFile(item); }catch(err){ console.error(err); setCardStatus(item,'处理失败：'+err.message,true); }
+  }
+  refreshAllBtns();
+}
+
+async function processFile(item){
+  setCardStatus(item,'解析中…');
+  const doc=await pdfjsLib.getDocument({data:item.bytes.slice(0)}).promise;
+  item.doc=doc;
+  const libDoc=await PDFLib.PDFDocument.load(item.bytes.slice(0),{ignoreEncryption:true});
+  item.libDoc=libDoc;
+  for(let i=1;i<=doc.numPages;i++){
+    setCardStatus(item,`识别中 第 ${i}/${doc.numPages} 页…`);
+    const page=await doc.getPage(i);
+    const thumbCv=await renderPage(page,92*3);
+    const textItems=await page.getTextContent();
+    let text=textItems.items.map(t=>t.str).join('').replace(/\s+/g,'');
+    if(text.length<4){
+      const stripCv=await renderStrip(page);
+      try{const w=await getOcr();const r=await w.recognize(stripCv);text=(r.data.text||'').replace(/\s+/g,'');}catch(e){console.warn('OCR fail p'+i,e);}
+    }
+    item.pages.push({cv:thumbCv,text,num:''});
+  }
+  item.starts=new Set([0]);
+  for(let i=1;i<item.pages.length;i++){
+    if(/销\s*售\s*合\s*同|銷\s*售\s*合\s*同|购\s*销\s*合\s*同|購\s*銷\s*合\s*同/.test(item.pages[i].text))item.starts.add(i);
+  }
+  computeSegs(item);
+  item.done=true;
+  setCardStatus(item,`完成 · ${item.pages.length} 页 · 识别出 ${item.segs.length} 份`);
+  renderDetail(item);
+}
+
+function renderPage(page,w){
+  const vp0=page.getViewport({scale:1});
+  const vp=page.getViewport({scale:w/vp0.width});
+  const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
+  return page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise.then(()=>c);
+}
+async function renderStrip(page){
+  const vp0=page.getViewport({scale:1});
+  const s=Math.min(3,Math.max(2,1400/vp0.width));
+  const vp=page.getViewport({scale:s});
+  const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
+  await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+  const strip=document.createElement('canvas');
+  strip.width=c.width;strip.height=Math.round(c.height*0.24);
+  strip.getContext('2d').drawImage(c,0,0);
+  return strip;
+}
+
+function computeSegs(item){
+  const starts=[...item.starts].sort((a,b)=>a-b);
+  item.segs=starts.map((s,idx)=>{
+    const end=(idx+1<starts.length)?starts[idx+1]:item.pages.length;
+    return {from:s,to:end,num:extractNum(item.pages[s].text),name:''};
+  });
+  refreshNames(item);
+}
+function extractNum(text){
+  if(!text)return '';
+  const t=text.replace(/\s+/g,'');
+  let m=t.match(/(?:合同编号|合同編號|編號|编号)[:：]?([A-Za-z0-9][A-Za-z0-9\-\/]{3,29})/);
+  if(!m)m=t.match(/\b([A-Z]{2,4}[-]?\d{3,}(?:[-\/]\d{1,4})?)/);
+  if(!m)return '';
+  return m[1].replace(/[:：,，。.;；]+$/,'');
+}
+function sanitize(s){return s.replace(/[\\/:*?"<>|]/g,'-');}
+function refreshNames(item){
+  const pfx=$('#prefix').value.trim()||'合同';
+  item.segs.forEach((sg,idx)=>{
+    const pg=`第${sg.from+1}-${sg.to}页`;
+    sg.name=sg.num?`${pfx}_${sanitize(sg.num)}.pdf`:`${pfx}_合同${idx+1}_${pg}.pdf`;
+  });
+}
+
+function renderFileCard(item){
+  const d=document.createElement('div');d.className='card';d.id='fc-'+files.indexOf(item);
+  d.innerHTML=`<div class="fhead" onclick="toggleDetail(${files.indexOf(item)})">
+    <div><span class="fname"></span><span class="fmeta"></span></div><span class="badge gray">排队中</span></div>
+    <div class="detail hide"></div>`;
+  d.querySelector('.fname').textContent=item.name;
+  $('#list').appendChild(d);
+  item.card=d;
+}
+function setCardStatus(item,msg,err){
+  if(!item.card)return;
+  const b=item.card.querySelector('.badge');
+  b.textContent=msg;
+  b.className='badge'+(err?' gray':'');
+}
+function toggleDetail(i){
+  const d=files[i].card.querySelector('.detail');
+  d.classList.toggle('hide');
+}
+function renderDetail(item){
+  const d=item.card.querySelector('.detail');
+  d.classList.remove('hide');
+  const idx=files.indexOf(item);
+  d.innerHTML=`<div class="thumbs"></div>
+    <div class="tipline"><span>共 ${item.pages.length} 页</span><span style="color:var(--blue)">点击缩略图可设为「合同开始页」/ 再点取消（第 1 页固定为开始）</span></div>
+    <table><thead><tr><th style="width:46%">输出文件名</th><th>页码</th><th>识别编号</th></tr></thead><tbody></tbody></table>
+    <div class="btns"><button onclick="exportOne(${idx})">单独导出该文件</button></div>`;
+  const tw=d.querySelector('.thumbs');
+  item.pages.forEach((p,i)=>{
+    const t=document.createElement('div');
+    t.className='thumb'+(item.starts.has(i)?' start':'');
+    const sc=document.createElement('canvas');sc.width=p.cv.width;sc.height=p.cv.height;
+    sc.getContext('2d').drawImage(p.cv,0,0);
+    sc.style.transform='scale(1)';
+    t.appendChild(sc);
+    if(item.starts.has(i)){const tag=document.createElement('span');tag.className='tag';tag.textContent=`合同 ${[...item.starts].sort((a,b)=>a-b).indexOf(i)+1} 开始`;t.appendChild(tag);}
+    const pn=document.createElement('div');pn.className='pn';pn.textContent=`第 ${i+1} 页`;t.appendChild(pn);
+    t.onclick=()=>{if(i===0)return;item.starts.has(i)?item.starts.delete(i):item.starts.add(i);computeSegs(item);renderDetail(item);};
+    tw.appendChild(t);
+  });
+  renderTable(item);
+}
+function renderTable(item){
+  const tb=item.card&&item.card.querySelector('tbody');
+  if(!tb)return;
+  tb.innerHTML='';
+  item.segs.forEach((sg,i)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><input value=""></td><td>${sg.from+1}–${sg.to}</td><td>${sg.num?`<span class="badge ok">✓ ${sg.num}</span>`:'<span class="badge gray">未识别</span>'}</td>`;
+    const inp=tr.querySelector('input');
+    inp.value=sg.name;
+    inp.onchange=()=>{sg.name=inp.value;};
+    tb.appendChild(tr);
+  });
+}
+
+async function splitOne(item){
+  const out=[];
+  for(const sg of item.segs){
+    const doc=await PDFLib.PDFDocument.create();
+    const idxs=[];for(let i=sg.from;i<sg.to;i++)idxs.push(i);
+    const cp=await doc.copyPages(item.libDoc,idxs);
+    cp.forEach(p=>doc.addPage(p));
+    const bytes=await doc.save();
+    out.push({name:sg.name||`part_${sg.from+1}.pdf`,bytes});
+  }
+  return out;
+}
+function dl(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000);}
+
+async function exportOne(i){
+  const item=files[i];
+  setCardStatus(item,'导出中…');
+  const parts=await splitOne(item);
+  for(const p of parts)dl(new Blob([p.bytes],{type:'application/pdf'}),p.name);
+  setCardStatus(item,`已导出 ${parts.length} 份`);
+}
+async function exportZipAll(){
+  const btn=$('#zipall');btn.disabled=true;btn.textContent='打包中…';
+  const zip=new JSZip();
+  for(const item of files){
+    if(!item.done)continue;
+    const folder=zip.folder(item.name.replace(/\.pdf$/i,''));
+    const parts=await splitOne(item);
+    parts.forEach(p=>folder.file(p.name,p.bytes));
+  }
+  const blob=await zip.generateAsync({type:'blob'});
+  dl(blob,'拆分结果.zip');
+  btn.disabled=false;btn.textContent='全部确认并打包下载 (zip)';
+}
+$('#zipall').onclick=exportZipAll;
+function refreshAllBtns(){$('#allbtns').classList.toggle('hide',!files.some(f=>f.done));}
+function setStatus(m){$('#status').textContent=m;}
+</script>
+</body>
+</html>
