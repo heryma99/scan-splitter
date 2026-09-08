@@ -71,6 +71,24 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let _workerBlobReady=false;
+async function ensurePdfWorker(){
+  if(_workerBlobReady)return;
+  const urls=[
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+    'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
+  ];
+  for(const u of urls){
+    try{
+      const txt=await (await fetch(u,{mode:'cors'})).text();
+      pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([txt],{type:'application/javascript'}));
+      _workerBlobReady=true;
+      return;
+    }catch(e){console.warn('worker source failed:',u,e);}
+  }
+  _workerBlobReady=true;
+}
 const $=s=>document.querySelector(s);
 let ocrWorker=null, files=[];
 
@@ -101,6 +119,7 @@ async function addFiles(fl){
 }
 
 async function processFile(item){
+  await ensurePdfWorker();
   setCardStatus(item,'解析中…');
   const doc=await pdfjsLib.getDocument({data:item.bytes.slice(0)}).promise;
   item.doc=doc;
