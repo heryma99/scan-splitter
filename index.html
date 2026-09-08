@@ -57,7 +57,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 <div class="wrap">
 <header>
   <div>
-    <h1>扫描件拆分工具</h1>
+    <h1>扫描件拆分工具 <span id="verTag" style="font-size:11px;font-weight:400;color:var(--mut);border:0.5px solid var(--line);border-radius:99px;padding:1px 8px;vertical-align:2px;"></span></h1>
     <div class="hint">文件仅在本机浏览器内处理，不上传服务器 · 合并扫描的合同/发票等自动拆分为多份 PDF</div>
   </div>
   <div class="pfx">命名前缀 <input id="prefix" value="" placeholder="留空=按单据类型"></div>
@@ -71,6 +71,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 </div>
 
 <script>
+const APP_VERSION='v1.4';
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 let _workerBlobReady=false;
 function ensurePdfWorker(){
@@ -79,8 +80,17 @@ function ensurePdfWorker(){
     const b64=document.getElementById('pdfworker_b64').textContent.trim();
     const txt=atob(b64);
     if(!window.pdfjsWorker){
-      try{ (0,eval)(txt); console.log('pdf worker: fake-worker mode (main thread)'); }
-      catch(e){ console.warn('inline worker eval failed', e); }
+      try{
+        (0,eval)("typeof globalThis==='undefined'&&(globalThis=window);"+txt);
+        console.log('pdf worker: fake-worker mode (main thread)');
+      }catch(e){
+        console.warn('inline eval failed, fallback to script tag', e);
+        try{
+          const s=document.createElement('script');
+          s.textContent="typeof globalThis==='undefined'&&(globalThis=window);"+txt;
+          document.head.appendChild(s);
+        }catch(e2){ console.warn('script tag worker failed', e2); }
+      }
     }
     try{
       pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([txt],{type:'application/javascript'}));
@@ -90,6 +100,7 @@ function ensurePdfWorker(){
 }
 const $=s=>document.querySelector(s);
 let ocrWorker=null, files=[];
+$('#verTag').textContent=APP_VERSION;
 
 const drop=$('#drop'), fileInput=$('#file');
 drop.onclick=()=>fileInput.click();
@@ -112,7 +123,7 @@ async function addFiles(fl){
     if(f.type!=='application/pdf'&&!f.name.toLowerCase().endsWith('.pdf'))continue;
     const item={name:f.name,bytes:await f.arrayBuffer(),pages:[],starts:new Set(),segs:[],libDoc:null,done:false};
     files.push(item); renderFileCard(item);
-    try{ await processFile(item); }catch(err){ console.error(err); setCardStatus(item,'处理失败：'+err.message,true); }
+    try{ await processFile(item); }catch(err){ console.error(err); setCardStatus(item,'处理失败['+APP_VERSION+'页面]：'+err.message,true); }
   }
   refreshAllBtns();
 }
