@@ -126,7 +126,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 </div>
 
 <script>
-const APP_VERSION='v2.3';
+const APP_VERSION='v2.4';
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 let _workerBlobReady=false;
 function ensurePdfWorker(){
@@ -199,14 +199,21 @@ async function processFile(item){
     if(text.length<4){
       const stripCv=await renderStrip(page);
       try{const w=await getOcr();const r=await w.recognize(stripCv);text=(r.data.text||'').replace(/\s+/g,'');}catch(e){console.warn('OCR fail p'+i,e);}
+      if(!extractKey(text)){
+        try{
+          const zc=await renderNumZone(page);const w2=await getOcr();const r2=await w2.recognize(zc);
+          const zt=(r2.data.text||'').replace(/\s+/g,'');
+          if(extractKey(zt))text=zt+text;
+        }catch(e){console.warn('numzone OCR fail p'+i,e);}
+      }
     }
-    item.pages.push({cv:thumbCv,text,num:extractNum(text,'')});
+    item.pages.push({cv:thumbCv,text,num:extractNum(text,''),key:extractKey(text)});
   }
   item.starts=new Set([0]);
-  let prevNum=item.pages[0].num;
+  let prevKey=item.pages[0].key;
   for(let i=1;i<item.pages.length;i++){
-    const n=item.pages[i].num;
-    if(n&&n!==prevNum){item.starts.add(i);prevNum=n;}
+    const k=item.pages[i].key;
+    if(k&&k!==prevKey){item.starts.add(i);prevKey=k;}
   }
   computeSegs(item);
   item.done=true;
@@ -230,6 +237,17 @@ async function renderStrip(page){
   strip.width=c.width;strip.height=Math.round(c.height*0.24);
   strip.getContext('2d').drawImage(c,0,0);
   return strip;
+}
+async function renderNumZone(page){
+  const vp0=page.getViewport({scale:1});
+  const s=Math.min(4,Math.max(3,2000/vp0.width));
+  const vp=page.getViewport({scale:s});
+  const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
+  await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+  const z=document.createElement('canvas');
+  z.width=Math.round(c.width*0.55);z.height=Math.round(c.height*0.13);
+  z.getContext('2d').drawImage(c,Math.round(c.width*0.45),0,z.width,z.height,0,0,z.width,z.height);
+  return z;
 }
 
 const DOC_TYPES=[
@@ -255,7 +273,8 @@ function computeSegs(item){
     const pg=item.pages[s];
     let t=detectType(pg.text);
     if(!t&&/^HT[S,L]/i.test(pg.num||''))t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
-    const num=pg.num||extractNum(pg.text,t?t.key:'');
+    let num=pg.num||extractNum(pg.text,t?t.key:'');
+    num=normalizeNum(num,pg.key);
     return {from:s,to:end,num,typeName:t?t.name:'单据',prefix:t?t.prefix:'单据',name:''};
   });
   refreshNames(item);
@@ -276,6 +295,22 @@ function extractNum(text,type){
   if(!m)m=t.match(/([A-Z]{2,4}[-]?\d{3,}(?:[-\/]\d{1,4})*)/);
   if(!m)return '';
   return m[1].replace(/[:：,，。.;；]+$/,'');
+}
+function normalizeNum(num,key){
+  if(!num)return num;
+  const m=num.match(/^([A-Za-z]{1,4})[-\s]*(\d[\d\-\/]*)$/);
+  if(!m)return num;
+  let prefix=m[1].toUpperCase();
+  if(!/^HT[SL]$/.test(prefix))prefix=/L/.test(prefix)?'HTL':'HTS';
+  return prefix+m[2];
+}
+function extractKey(text){
+  if(!text)return '';
+  const t=text.replace(/\s+/g,'');
+  const m=t.match(/(?:合同编号|合同編號|編號|编号)[:：]?([A-Za-z0-9][A-Za-z0-9\-\/]{3,29})/i)||t.match(/([A-Z]{2,4}[-]?\d{3,}(?:[-\/]\d{1,4})*)/i);
+  if(!m)return '';
+  const allDigits=(m[1].match(/\d+/g)||[]).join('');
+  return allDigits||m[1].replace(/[^A-Za-z0-9]/g,'').toUpperCase();
 }
 function sanitize(s){return s.replace(/[\\/:*?"<>|]/g,'-');}
 function refreshNames(item){
