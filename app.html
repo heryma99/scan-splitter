@@ -126,7 +126,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 </div>
 
 <script>
-const APP_VERSION='v2.4';
+const APP_VERSION='v2.5';
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 let _workerBlobReady=false;
 function ensurePdfWorker(){
@@ -207,13 +207,18 @@ async function processFile(item){
         }catch(e){console.warn('numzone OCR fail p'+i,e);}
       }
     }
-    item.pages.push({cv:thumbCv,text,num:extractNum(text,''),key:extractKey(text)});
+    item.pages.push({cv:thumbCv,text,num:extractNum(text,''),key:extractKey(text),isTitle:/采购合同|采購合同|採購合同/.test(text)});
   }
   item.starts=new Set([0]);
   let prevKey=item.pages[0].key;
+  let lastStart=0;
   for(let i=1;i<item.pages.length;i++){
-    const k=item.pages[i].key;
-    if(k&&k!==prevKey){item.starts.add(i);prevKey=k;}
+    const pg=item.pages[i];
+    const k=pg.key;
+    const byNum=k&&k!==prevKey;
+    const byTitle=pg.isTitle&&(i-lastStart)>=2&&!k;
+    if(byNum||byTitle){item.starts.add(i);prevKey=k||prevKey;lastStart=i;}
+    else if(k)prevKey=k;
   }
   computeSegs(item);
   item.done=true;
@@ -240,13 +245,13 @@ async function renderStrip(page){
 }
 async function renderNumZone(page){
   const vp0=page.getViewport({scale:1});
-  const s=Math.min(4,Math.max(3,2000/vp0.width));
+  const s=Math.min(4.5,Math.max(3.5,2400/vp0.width));
   const vp=page.getViewport({scale:s});
   const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
   await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
   const z=document.createElement('canvas');
-  z.width=Math.round(c.width*0.55);z.height=Math.round(c.height*0.13);
-  z.getContext('2d').drawImage(c,Math.round(c.width*0.45),0,z.width,z.height,0,0,z.width,z.height);
+  z.width=Math.round(c.width*0.62);z.height=Math.round(c.height*0.30);
+  z.getContext('2d').drawImage(c,Math.round(c.width*0.38),0,z.width,z.height,0,0,z.width,z.height);
   return z;
 }
 
@@ -272,9 +277,10 @@ function computeSegs(item){
     const end=(idx+1<starts.length)?starts[idx+1]:item.pages.length;
     const pg=item.pages[s];
     let t=detectType(pg.text);
-    if(!t&&/^HT[S,L]/i.test(pg.num||''))t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
     let num=pg.num||extractNum(pg.text,t?t.key:'');
     num=normalizeNum(num,pg.key);
+    if(!t&&/^HT[SL]/i.test(num))t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
+    if(!t&&pg.isTitle)t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
     return {from:s,to:end,num,typeName:t?t.name:'单据',prefix:t?t.prefix:'单据',name:''};
   });
   refreshNames(item);
