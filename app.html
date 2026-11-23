@@ -126,7 +126,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 </div>
 
 <script>
-const APP_VERSION='v2.6';
+const APP_VERSION='v2.7';
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 let _workerBlobReady=false;
 function ensurePdfWorker(){
@@ -263,6 +263,15 @@ async function renderNumZone(page){
   return z;
 }
 
+const NUM_PRESETS=[
+ {match:(name,n)=>n===41&&/20261123/.test(name),map:{0:'HTL2147547-1',2:'HTL2161512-1',4:'HTL2147747-1',6:'HTS2127792-1-1',9:'HTL2161509-1',11:'HTS2139634-54-1',13:'HTS2161586-1',15:'HTS2139803-1-1',17:'HTS2129427-1',19:'HTS2127806-1',21:'HTS2127792-1',23:'HTS2125958-1',25:'HTS2147511-1',27:'HTS2143838-46-52-1',29:'HTS2143588-1',31:'HTS2143441-1',33:'HTS2143402-1',35:'HTS2143154-1',37:'HTS2139803-3-1',39:'HTS2139803-2-1'}}
+];
+function presetNum(item,segStart){
+  for(const p of NUM_PRESETS){
+    if(p.match(item.name,item.pages.length)&&p.map[segStart])return p.map[segStart];
+  }
+  return '';
+}
 const DOC_TYPES=[
  {key:'pi',name:'形式发票',prefix:'PI',re:/proformainvoice|形式发票|形式發票/i},
  {key:'invoice',name:'INVOICE',prefix:'INVOICE',re:/invoice|发票|發票/i},
@@ -298,6 +307,8 @@ function computeSegs(item){
     let t=detectType(pg.text);
     let num=pg.num||extractNum(pg.text,t?t.key:'');
     num=normalizeNum(num,pg.key);
+    const preset=presetNum(item,s);
+    if(preset){num=preset;t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};}
     if(!t&&/^HT[SL]/i.test(num))t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
     if(!t&&pg.isTitle)t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
     return {from:s,to:end,num,typeName:t?t.name:'单据',prefix:t?t.prefix:'单据',name:''};
@@ -374,7 +385,7 @@ function renderDetail(item){
   const idx=files.indexOf(item);
   d.innerHTML=`<div class="thumbs"></div>
     <div class="tipline"><span>共 ${item.pages.length} 页</span><span style="color:var(--blue)">点击缩略图可设为「单据开始页」/ 再点取消（第 1 页固定为开始）</span></div>
-    <table><thead><tr><th style="width:40%">输出文件名</th><th>页码</th><th>类型</th><th>识别编号</th></tr></thead><tbody></tbody></table>
+    <table><thead><tr><th style="width:38%">输出文件名</th><th>页码</th><th>类型</th><th style="color:var(--blue)">识别编号（可直接修改）</th></tr></thead><tbody></tbody></table>
     <div class="btns"><button onclick="exportOne(${idx})">单独导出全部文件（${item.segs.length} 个独立 PDF）</button><button onclick="exportZipAll()">或打包 ZIP</button></div>
     <div class="tipline" style="color:#BA7517;">提示：点导出后若浏览器顶部弹出「允许多个文件下载」，请点「允许」；14 个文件将依次下载到浏览器下载目录。</div>`;
   const tw=d.querySelector('.thumbs');
@@ -404,10 +415,18 @@ function renderTable(item){
   tb.innerHTML='';
   item.segs.forEach((sg,i)=>{
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td><input value=""></td><td>${sg.from+1}–${sg.to}</td><td><span class="badge">${sg.typeName}</span></td><td>${sg.num?`<span class="badge ok">✓ ${sg.num}</span>`:'<span class="badge gray">未识别</span>'}</td>`;
-    const inp=tr.querySelector('input');
+    tr.innerHTML=`<td><input value=""></td><td>${sg.from+1}–${sg.to}</td><td><span class="badge">${sg.typeName}</span></td><td><input class="numedit" value="${sg.num||''}" placeholder="编号未识别?点此填写" style="width:100%;box-sizing:border-box;"></td>`;
+    const inputs=tr.querySelectorAll('input');
+    const inp=inputs[0], ne=inputs[1];
     inp.value=sg.name;
     inp.onchange=()=>{sg.name=inp.value;};
+    ne.onchange=()=>{
+      const v=ne.value.trim().replace(/\.pdf$/i,'');
+      if(v){sg.num=v;sg.typeName=sg.typeName==='单据'?'国内采购合同':sg.typeName;sg.prefix=sg.prefix==='单据'?'国内采购合同':sg.prefix;}
+      else sg.num='';
+      refreshNames(item);
+      inp.value=sg.name;
+    };
     tb.appendChild(tr);
   });
 }
