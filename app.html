@@ -126,7 +126,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 </div>
 
 <script>
-const APP_VERSION='v2.5';
+const APP_VERSION='v2.6';
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 let _workerBlobReady=false;
 function ensurePdfWorker(){
@@ -199,12 +199,20 @@ async function processFile(item){
     if(text.length<4){
       const stripCv=await renderStrip(page);
       try{const w=await getOcr();const r=await w.recognize(stripCv);text=(r.data.text||'').replace(/\s+/g,'');}catch(e){console.warn('OCR fail p'+i,e);}
+      let gotKey=false;
       if(!extractKey(text)){
         try{
           const zc=await renderNumZone(page);const w2=await getOcr();const r2=await w2.recognize(zc);
           const zt=(r2.data.text||'').replace(/\s+/g,'');
-          if(extractKey(zt))text=zt+text;
+          if(extractKey(zt)){text=zt+text;gotKey=true;}
         }catch(e){console.warn('numzone OCR fail p'+i,e);}
+      }
+      if(!gotKey){
+        try{
+          const tc=await renderTitleZone(page);const w3=await getOcr();const r3=await w3.recognize(tc);
+          const tt=(r3.data.text||'').replace(/\s+/g,'');
+          if(/采购合同|采購合同|採購合同/.test(tt))text=tt+text;
+        }catch(e){console.warn('titlezone OCR fail p'+i,e);}
       }
     }
     item.pages.push({cv:thumbCv,text,num:extractNum(text,''),key:extractKey(text),isTitle:/采购合同|采購合同|採購合同/.test(text)});
@@ -245,13 +253,13 @@ async function renderStrip(page){
 }
 async function renderNumZone(page){
   const vp0=page.getViewport({scale:1});
-  const s=Math.min(4.5,Math.max(3.5,2400/vp0.width));
+  const s=Math.min(5,Math.max(4,2800/vp0.width));
   const vp=page.getViewport({scale:s});
   const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
   await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
   const z=document.createElement('canvas');
-  z.width=Math.round(c.width*0.62);z.height=Math.round(c.height*0.30);
-  z.getContext('2d').drawImage(c,Math.round(c.width*0.38),0,z.width,z.height,0,0,z.width,z.height);
+  z.width=Math.round(c.width*0.50);z.height=Math.round(c.height*0.10);
+  z.getContext('2d').drawImage(c,Math.round(c.width*0.50),Math.round(c.height*0.05),z.width,z.height,0,0,z.width,z.height);
   return z;
 }
 
@@ -265,6 +273,17 @@ const DOC_TYPES=[
  {key:'contract',name:'销售合同',prefix:'销售合同',re:/销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|合同书|合同書|salescontract|purchasecontract|^(?:銷|销)?售?(?:购|購)?合同(?:書|书)?$/i},
  {key:'purchase',name:'国内采购合同',prefix:'国内采购合同',re:/国内采购合同|国内採購合同|采购合同|采購合同|採購合同|采购契約|採購契約/i}
 ];
+async function renderTitleZone(page){
+  const vp0=page.getViewport({scale:1});
+  const s=Math.min(5,Math.max(4,2800/vp0.width));
+  const vp=page.getViewport({scale:s});
+  const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
+  await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+  const z=document.createElement('canvas');
+  z.width=Math.round(c.width*0.60);z.height=Math.round(c.height*0.08);
+  z.getContext('2d').drawImage(c,Math.round(c.width*0.20),Math.round(c.height*0.11),z.width,z.height,0,0,z.width,z.height);
+  return z;
+}
 function detectType(text){
   if(!text)return null;
   const t=text.replace(/\s+/g,'');
