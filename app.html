@@ -126,7 +126,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 </div>
 
 <script>
-const APP_VERSION='v2.10';
+const APP_VERSION='v2.11';
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 let _workerBlobReady=false;
 function ensurePdfWorker(){
@@ -196,16 +196,31 @@ async function processFile(item){
     const thumbCv=await renderPage(page,92*3);
     const textItems=await page.getTextContent();
     let text=textItems.items.map(t=>t.str).join('').replace(/\s+/g,'');
-    if(text.length<4){
+      // v2.11 多层编号候选：strip + numZone(5x) + numUltra(8x 仅候选分歧时)，按数字指纹多数票，组内优先带后缀段读法
+      const cands=[];
+      const LAB=/(?:合同编号|合同編號|合約編號|合约编号|編號|编号|入库单号|入庫單號|送货单号|送貨單號|发票号码|發票號碼|invoiceno)[.:：]?/i;
+      let gotKey=false;
+      if(text.length<4){
       const stripCv=await renderStrip(page);
       try{const w=await getOcr();const r=await w.recognize(stripCv);text=(r.data.text||'').replace(/\s+/g,'');}catch(e){console.warn('OCR fail p'+i,e);}
-      let gotKey=false;
-      if(!extractKey(text)){
+      if(extractNum(text,''))cands.push({num:extractNum(text,''),labeled:LAB.test(text)});
+      if(!extractKey(text)||!LAB.test(text)){
         try{
           const zc=await renderNumZone(page);const w2=await getOcr();const r2=await w2.recognize(zc);
           const zt=(r2.data.text||'').replace(/\s+/g,'');
-          if(extractKey(zt)){text=zt+text;gotKey=true;}
+          if(extractNum(zt,'')){
+            cands.push({num:extractNum(zt,''),labeled:LAB.test(zt)});
+            if(!extractKey(text)){text=zt+text;gotKey=true;}
+          }
         }catch(e){console.warn('numzone OCR fail p'+i,e);}
+      }
+      const numGroups=cs=>{const s=new Set();cs.forEach(c=>s.add((c.num.match(/\d+/g)||[]).join('')));return s;};
+      if(cands.length&&numGroups(cands).size>1){
+        try{
+          const bc=await renderNumUltra(page);const w4=await getOcr();const r4=await w4.recognize(bc);
+          const bt=(r4.data.text||'').replace(/\s+/g,'');
+          if(extractNum(bt,''))cands.push({num:extractNum(bt,''),labeled:LAB.test(bt)});
+        }catch(e){console.warn('numultra OCR fail p'+i,e);}
       }
       if(!gotKey||(extractKey(text)&&!detectType(text))){
         try{
@@ -216,7 +231,9 @@ async function processFile(item){
         }catch(e){console.warn('titlezone OCR fail p'+i,e);}
       }
     }
-    item.pages.push({cv:thumbCv,text,num:extractNum(text,''),key:extractKey(text),isTitle:/采购合同|采購合同|採購合同|销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|送货单|送貨單|入库单|入庫單/.test(text)});
+    const pk=pickNum(cands);
+    const pnum=pk.num||extractNum(text,'');
+    item.pages.push({cv:thumbCv,text,num:pnum?normalizeNum(pnum,''):'',key:extractKey(text),labeled:pk.labeled||LAB.test(text),isTitle:/采购合同|采購合同|採購合同|销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|送货单|送貨單|入库单|入庫單/.test(text)});
   }
   item.starts=new Set([0]);
   let prevKey=item.pages[0].key;
@@ -224,10 +241,10 @@ async function processFile(item){
   for(let i=1;i<item.pages.length;i++){
     const pg=item.pages[i];
     const k=pg.key;
-    const byNum=k&&k!==prevKey;
+    // v2.11 起始页证据门槛：编号变化必须伴随事实证据（标签命中或标题命中），纯噪声 key 不切分不污染 prevKey
+    const byNum=k&&k!==prevKey&&(pg.labeled||pg.isTitle);
     const byTitle=pg.isTitle&&(i-lastStart)>=2&&!k;
     if(byNum||byTitle){item.starts.add(i);prevKey=k||prevKey;lastStart=i;}
-    else if(k)prevKey=k;
   }
   computeSegs(item);
   item.done=true;
@@ -261,6 +278,18 @@ async function renderNumZone(page){
   const z=document.createElement('canvas');
   z.width=Math.round(c.width*0.98);z.height=Math.round(c.height*0.14);
   z.getContext('2d').drawImage(c,Math.round(c.width*0.01),Math.round(c.height*0.02),z.width,z.height,0,0,z.width,z.height);
+  return z;
+}
+
+async function renderNumUltra(page){
+  const vp0=page.getViewport({scale:1});
+  const s=Math.min(8,Math.max(6,3600/vp0.width));
+  const vp=page.getViewport({scale:s});
+  const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
+  await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+  const z=document.createElement('canvas');
+  z.width=c.width;z.height=Math.round(c.height*0.12);
+  z.getContext('2d').drawImage(c,0,Math.round(c.height*0.02),z.width,z.height,0,0,z.width,z.height);
   return z;
 }
 
@@ -298,6 +327,26 @@ async function renderTitleZone(page){
   z.getContext('2d').drawImage(c,Math.round(c.width*0.15),Math.round(c.height*0.02),z.width,z.height,0,0,z.width,z.height);
   return z;
 }
+function pickNum(cands){
+  if(!cands||!cands.length)return {num:'',labeled:false};
+  const dig=c=>(c.num.match(/\d+/g)||[]).join('');
+  const groups={};
+  cands.forEach(c=>{const d=dig(c);(groups[d]=groups[d]||[]).push(c);});
+  let best=null;
+  for(const d in groups){const g=groups[d];
+    if(!best){best=g;continue;}
+    const gDash=g.some(c=>/-/.test(c.num)),bDash=best.some(c=>/-/.test(c.num));
+    if(g.length>best.length||(g.length===best.length&&gDash&&!bDash))best=g;
+  }
+  const wd=best.filter(c=>/-/.test(c.num));
+  return {num:(wd.length?wd[0]:best[0]).num,labeled:best.some(c=>c.labeled)};
+}
+function detectTypeStrong(text){
+  if(!text)return null;
+  const t=text.replace(/\s+/g,'');
+  for(const d of DOC_TYPES){if(d.strong&&d.strong.test(t))return d;}
+  return null;
+}
 function canonTitle(tt){
   if(/銷售合同|销售合同|銷.合同|售.合同|销.合同|購銷合同|购销合同/.test(tt))return '銷售合同';
   if(/采购合同|采購合同|採購合同|採.合同|采.合同|購.合同|购.合同/.test(tt))return '国内采购合同';
@@ -314,17 +363,24 @@ function detectType(text){
 }
 function computeSegs(item){
   const starts=[...item.starts].sort((a,b)=>a-b);
-  item.segs=starts.map((s,idx)=>{
+  const raws=starts.map((s,idx)=>{
     const end=(idx+1<starts.length)?starts[idx+1]:item.pages.length;
     const pg=item.pages[s];
-    let t=detectType(pg.text);
-    let num=pg.num||extractNum(pg.text,t?t.key:'');
-    num=normalizeNum(num,pg.key);
-    const preset=presetNum(item,s);
-    if(preset){num=preset;t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};}
+    return {from:s,to:end,pg,t:detectType(pg.text),preset:presetNum(item,s)};
+  });
+  // v2.11 文件内类型表决：以强信号（专属标题词）命中为证据，无类型段随多数（≥2 票才生效）
+  const votes={};
+  raws.forEach(r=>{const st=detectTypeStrong(r.pg.text);if(st)votes[st.name]=(votes[st.name]||0)+1;});
+  let maj=null,mj=0;
+  for(const n in votes){if(votes[n]>mj){mj=votes[n];maj=n;}}
+  item.segs=raws.map(r=>{
+    let t=r.t,num=r.pg.num||extractNum(r.pg.text,t?t.key:'');
+    num=normalizeNum(num,'');
+    if(r.preset){num=r.preset;t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};}
+    if(!t&&maj&&mj>=2)t=DOC_TYPES.find(d=>d.name===maj)||null;
     if(!t&&/^HT[SL]/i.test(num))t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
-    if(!t&&pg.isTitle)t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
-    return {from:s,to:end,num,typeName:t?t.name:'单据',prefix:t?t.prefix:'单据',name:''};
+    if(!t&&r.pg.isTitle)t={key:'purchase',name:'国内采购合同',prefix:'国内采购合同'};
+    return {from:r.from,to:r.to,num,typeName:t?t.name:'单据',prefix:t?t.prefix:'单据',name:''};
   });
   refreshNames(item);
 }
