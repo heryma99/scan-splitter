@@ -303,6 +303,8 @@ function toggleDetail(i){
 }
 function renderDetail(item){
   const d=item.card.querySelector('.detail');
+  const prevThumbs=d.querySelector('.thumbs');
+  const savedScroll=prevThumbs?prevThumbs.scrollLeft:0;
   d.classList.remove('hide');
   const idx=files.indexOf(item);
   d.innerHTML=`<div class="thumbs"></div>
@@ -327,6 +329,7 @@ function renderDetail(item){
     t.onclick=()=>{if(i===0)return;item.starts.has(i)?item.starts.delete(i):item.starts.add(i);computeSegs(item);renderDetail(item);};
     tw.appendChild(t);
   });
+  tw.scrollLeft=savedScroll;
   renderTable(item);
 }
 function renderTable(item){
