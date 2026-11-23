@@ -126,7 +126,7 @@ button:disabled{opacity:.45;cursor:not-allowed;}
 </div>
 
 <script>
-const APP_VERSION='v2.8';
+const APP_VERSION='v2.9';
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 let _workerBlobReady=false;
 function ensurePdfWorker(){
@@ -211,11 +211,11 @@ async function processFile(item){
         try{
           const tc=await renderTitleZone(page);const w3=await getOcr();const r3=await w3.recognize(tc);
           const tt=(r3.data.text||'').replace(/\s+/g,'');
-          if(/采购合同|采購合同|採購合同/.test(tt))text=tt+text;
+          if(/采购合同|采購合同|採購合同|销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|送货单|送貨單|入库单|入庫單/.test(tt))text=tt+text;
         }catch(e){console.warn('titlezone OCR fail p'+i,e);}
       }
     }
-    item.pages.push({cv:thumbCv,text,num:extractNum(text,''),key:extractKey(text),isTitle:/采购合同|采購合同|採購合同|送货单|送貨單|入库单|入庫單/.test(text)});
+    item.pages.push({cv:thumbCv,text,num:extractNum(text,''),key:extractKey(text),isTitle:/采购合同|采購合同|採購合同|销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|送货单|送貨單|入库单|入庫單/.test(text)});
   }
   item.starts=new Set([0]);
   let prevKey=item.pages[0].key;
@@ -276,13 +276,13 @@ function presetNum(item,segStart){
 }
 const DOC_TYPES=[
  {key:'pi',name:'形式发票',prefix:'PI',re:/proformainvoice|形式发票|形式發票/i},
- {key:'invoice',name:'INVOICE',prefix:'INVOICE',re:/invoice|发票|發票/i},
+ {key:'invoice',name:'INVOICE',prefix:'INVOICE',re:/invoice|发票|發票/i,strong:/invoiceno|invoicenumber|发票号码|發票號碼|commercialinvoice|商业发票|商業發票|proformainvoice|形式发票/i},
  {key:'packing',name:'装箱单',prefix:'装箱单',re:/packinglist|装箱单|裝箱單/i},
  {key:'bl',name:'提单',prefix:'提单',re:/billoflading|提单|提單/i},
  {key:'customs',name:'报关单',prefix:'报关单',re:/报关单|報關單/i},
  {key:'confirm',name:'售货确认书',prefix:'售货确认书',re:/salesconfirmation|售货确认书|售貨確認書/i},
- {key:'contract',name:'销售合同',prefix:'销售合同',re:/销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|合同书|合同書|salescontract|purchasecontract|^(?:銷|销)?售?(?:购|購)?合同(?:書|书)?$/i},
- {key:'purchase',name:'国内采购合同',prefix:'国内采购合同',re:/国内采购合同|国内採購合同|采购合同|采購合同|採購合同|采购契約|採購契約/i},
+ {key:'contract',name:'销售合同',prefix:'销售合同',re:/销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|合同书|合同書|salescontract|purchasecontract|^(?:銷|销)?售?(?:购|購)?合同(?:書|书)?$/i,strong:/销售合同|銷售合同|购销合同|購銷合同|售货合同|售貨合同|salescontract/},
+ {key:'purchase',name:'国内采购合同',prefix:'国内采购合同',re:/国内采购合同|国内採購合同|采购合同|采購合同|採購合同|采购契約|採購契約/i,strong:/国内采购合同|国内採購合同|采购合同|采購合同|採購合同/},
  {key:'ruku',name:'入库单',prefix:'入库单',re:/入库单|入庫單/i},
  {key:'songhuo',name:'送货单',prefix:'送货单',re:/送货单|送貨單/i}
 ];
@@ -300,6 +300,7 @@ async function renderTitleZone(page){
 function detectType(text){
   if(!text)return null;
   const t=text.replace(/\s+/g,'');
+  for(const d of DOC_TYPES){if(d.strong&&d.strong.test(t))return d;}
   for(const d of DOC_TYPES){if(d.re.test(t))return d;}
   return null;
 }
